@@ -139,6 +139,20 @@ create table if not exists revenue_months (
   unique(year, month)
 );
 
+-- ------------------------------------------------------------
+-- REVENUE SETTINGS (yearly inputs that drive monthly targets)
+-- ------------------------------------------------------------
+
+create table if not exists revenue_settings (
+  id uuid primary key default gen_random_uuid(),
+  year int not null unique,
+  yearly_revenue_target numeric not null default 0,
+  target_mer numeric not null default 1.8,
+  gross_margin_pct numeric not null default 0.7,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
 -- ============================================================
 -- 5. CREATORS
 -- ============================================================
@@ -167,26 +181,32 @@ alter table key_results       enable row level security;
 alter table calendar_events   enable row level security;
 alter table creative_roadmap  enable row level security;
 alter table revenue_months    enable row level security;
+alter table revenue_settings  enable row level security;
 alter table creators          enable row level security;
 
-create policy "auth read profiles"          on profiles          for select using (auth.role() = 'authenticated');
-create policy "user updates own profile"    on profiles          for update using (auth.uid() = id);
+create policy "auth read profiles"          on profiles          for select using (auth.uid() is not null);
+create policy "user updates own profile"    on profiles          for update using (auth.uid() = id) with check (auth.uid() = id);
 
-create policy "auth all okrs"               on okrs              for all    using (auth.role() = 'authenticated');
-create policy "auth all key_results"        on key_results       for all    using (auth.role() = 'authenticated');
-create policy "auth all calendar_events"    on calendar_events   for all    using (auth.role() = 'authenticated');
-create policy "auth all creative_roadmap"   on creative_roadmap  for all    using (auth.role() = 'authenticated');
-create policy "auth all revenue_months"     on revenue_months    for all    using (auth.role() = 'authenticated');
-create policy "auth all creators"           on creators          for all    using (auth.role() = 'authenticated');
+create policy "auth all okrs"               on okrs              for all using (auth.uid() is not null) with check (auth.uid() is not null);
+create policy "auth all key_results"        on key_results       for all using (auth.uid() is not null) with check (auth.uid() is not null);
+create policy "auth all calendar_events"    on calendar_events   for all using (auth.uid() is not null) with check (auth.uid() is not null);
+create policy "auth all creative_roadmap"   on creative_roadmap  for all using (auth.uid() is not null) with check (auth.uid() is not null);
+create policy "auth all revenue_months"     on revenue_months    for all using (auth.uid() is not null) with check (auth.uid() is not null);
+create policy "auth all revenue_settings"   on revenue_settings  for all using (auth.uid() is not null) with check (auth.uid() is not null);
+create policy "auth all creators"           on creators          for all using (auth.uid() is not null) with check (auth.uid() is not null);
 
 -- ============================================================
 -- TRIGGER: auto-create profile on signup
 -- ============================================================
 
-create or replace function handle_new_user()
-returns trigger as $$
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
 begin
-  insert into profiles (id, email, full_name)
+  insert into public.profiles (id, email, full_name)
   values (
     new.id,
     new.email,
@@ -194,12 +214,12 @@ begin
   );
   return new;
 end;
-$$ language plpgsql security definer;
+$$;
 
 drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
-  for each row execute procedure handle_new_user();
+  for each row execute procedure public.handle_new_user();
 
 -- ============================================================
 -- TRIGGER: keep updated_at fresh
@@ -219,7 +239,7 @@ begin
   for t in
     select unnest(array[
       'profiles','okrs','key_results','calendar_events',
-      'creative_roadmap','revenue_months','creators'
+      'creative_roadmap','revenue_months','revenue_settings','creators'
     ])
   loop
     execute format('drop trigger if exists set_updated_at_%I on %I;', t, t);
