@@ -17,9 +17,11 @@ export default function Dashboard() {
   const [creators, setCreators] = useState([])
   const [revenue, setRevenue] = useState([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(null)
 
   useEffect(() => {
     let cancel = false
+    setLoading(true); setLoadError(null)
     Promise.all([
       supabase.from('okrs').select('*').eq('year', year).order('quarter'),
       supabase.from('key_results').select('*'),
@@ -28,12 +30,20 @@ export default function Dashboard() {
       supabase.from('revenue_months').select('*').eq('year', year).order('month'),
     ]).then(([o, k, cr, cw, rv]) => {
       if (cancel) return
-      setOkrs(o.data ?? [])
-      setKrs(k.data ?? [])
-      setCreative(cr.data ?? [])
-      setCreators(cw.data ?? [])
-      setRevenue(rv.data ?? [])
-      setLoading(false)
+      const firstErr = [o, k, cr, cw, rv].find(r => r.error)?.error
+      if (firstErr) {
+        setLoadError(firstErr.message)
+      } else {
+        setOkrs(o.data ?? [])
+        setKrs(k.data ?? [])
+        setCreative(cr.data ?? [])
+        setCreators(cw.data ?? [])
+        setRevenue(rv.data ?? [])
+      }
+    }).catch((e) => {
+      if (!cancel) setLoadError(e.message ?? String(e))
+    }).finally(() => {
+      if (!cancel) setLoading(false)
     })
     return () => { cancel = true }
   }, [year])
@@ -76,6 +86,13 @@ export default function Dashboard() {
   }, [krs])
 
   if (loading) return <div className="empty"><div className="spinner" style={{ display: 'inline-block' }}/></div>
+  if (loadError) return (
+    <div className="empty">
+      <h3>Couldn't load dashboard data</h3>
+      <p style={{ marginBottom: 14 }}>{loadError}</p>
+      <button className="btn primary" onClick={() => window.location.reload()}>Try again</button>
+    </div>
+  )
 
   return (
     <>
