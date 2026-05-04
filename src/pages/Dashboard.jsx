@@ -16,6 +16,7 @@ export default function Dashboard() {
   const [creative, setCreative] = useState([])
   const [creators, setCreators] = useState([])
   const [revenue, setRevenue] = useState([])
+  const [settings, setSettings] = useState(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
 
@@ -28,7 +29,8 @@ export default function Dashboard() {
       supabase.from('creative_roadmap').select('id, status, test_result, spend'),
       supabase.from('creators').select('id'),
       supabase.from('revenue_months').select('*').eq('year', year).order('month'),
-    ]).then(([o, k, cr, cw, rv]) => {
+      supabase.from('revenue_settings').select('*').eq('year', year).maybeSingle(),
+    ]).then(([o, k, cr, cw, rv, s]) => {
       if (cancel) return
       const firstErr = [o, k, cr, cw, rv].find(r => r.error)?.error
       if (firstErr) {
@@ -39,6 +41,7 @@ export default function Dashboard() {
         setCreative(cr.data ?? [])
         setCreators(cw.data ?? [])
         setRevenue(rv.data ?? [])
+        setSettings(s.data ?? null)
       }
     }).catch((e) => {
       if (!cancel) setLoadError(e.message ?? String(e))
@@ -53,30 +56,47 @@ export default function Dashboard() {
     const decided = creative.filter(r => r.test_result === 'winner' || r.test_result === 'loser').length
     const hitRate = decided ? (winners / decided) * 100 : 0
 
+    // Compute monthly targets from settings + prior-year seasonality
+    const yearlyTarget = Number(settings?.yearly_revenue_target) || 0
+    const priorTotal = revenue.reduce((s, r) => s + (Number(r.prior_year_revenue) || 0), 0)
+    const targetFor = (m) => {
+      const row = revenue.find(r => r.month === m)
+      const prior = Number(row?.prior_year_revenue) || 0
+      const pct = priorTotal > 0 ? prior / priorTotal : 1 / 12
+      return yearlyTarget * pct
+    }
+
     const ytdActual = revenue.reduce((s, r) => s + (Number(r.actual_revenue) || 0), 0)
-    const ytdTarget = revenue.reduce((s, r) => s + (Number(r.target_revenue) || 0), 0)
+    const ytdTarget = revenue.reduce((s, r) => s + targetFor(r.month), 0)
     const thisMonth = revenue.find(r => r.month === month) ?? {}
 
     const openOkrs = okrs.filter(o => !['achieved', 'missed'].includes(o.status)).length
 
     return {
       hitRate, winners, decided,
-      ytdActual, ytdTarget,
+      ytdActual, ytdTarget, yearlyTarget,
       mtdActual: Number(thisMonth.actual_revenue) || 0,
-      mtdTarget: Number(thisMonth.target_revenue) || 0,
+      mtdTarget: targetFor(month),
       openOkrs, totalCreators: creators.length,
     }
-  }, [okrs, creative, revenue, creators, month])
+  }, [okrs, creative, revenue, creators, month, settings])
 
   const chart = useMemo(() => {
     const m = {}
     revenue.forEach(r => m[r.month] = r)
-    return Array.from({ length: 12 }, (_, i) => ({
-      month: MONTHS[i],
-      target: Number(m[i + 1]?.target_revenue) || 0,
-      actual: Number(m[i + 1]?.actual_revenue) || 0,
-    }))
-  }, [revenue])
+    const yearlyTarget = Number(settings?.yearly_revenue_target) || 0
+    const priorTotal = revenue.reduce((s, r) => s + (Number(r.prior_year_revenue) || 0), 0)
+    return Array.from({ length: 12 }, (_, i) => {
+      const row = m[i + 1]
+      const prior = Number(row?.prior_year_revenue) || 0
+      const pct = priorTotal > 0 ? prior / priorTotal : 1 / 12
+      return {
+        month: MONTHS[i],
+        target: Math.round(yearlyTarget * pct),
+        actual: Math.round(Number(row?.actual_revenue) || 0),
+      }
+    })
+  }, [revenue, settings])
 
   const currentQuarterOkrs = okrs.filter(o => o.quarter === quarter)
   const krsByOkr = useMemo(() => {
