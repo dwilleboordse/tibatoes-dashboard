@@ -48,6 +48,24 @@ create table if not exists key_results (
 
 create index if not exists key_results_okr_id_idx on key_results(okr_id);
 
+create table if not exists initiatives (
+  id uuid primary key default gen_random_uuid(),
+  okr_id uuid not null references okrs(id) on delete cascade,
+  key_result_id uuid references key_results(id) on delete set null,
+  title text not null,
+  description text,
+  status text not null default 'not_started'
+    check (status in ('not_started', 'in_progress', 'blocked', 'done', 'dropped')),
+  owner_id uuid references profiles(id) on delete set null,
+  due_date date,
+  position int default 0,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create index if not exists initiatives_okr_id_idx on initiatives(okr_id);
+create index if not exists initiatives_kr_id_idx on initiatives(key_result_id);
+
 -- ============================================================
 -- 2. CALENDAR
 -- ============================================================
@@ -178,6 +196,7 @@ create table if not exists creators (
 alter table profiles          enable row level security;
 alter table okrs              enable row level security;
 alter table key_results       enable row level security;
+alter table initiatives       enable row level security;
 alter table calendar_events   enable row level security;
 alter table creative_roadmap  enable row level security;
 alter table revenue_months    enable row level security;
@@ -189,6 +208,7 @@ create policy "user updates own profile"    on profiles          for update usin
 
 create policy "auth all okrs"               on okrs              for all using (auth.uid() is not null) with check (auth.uid() is not null);
 create policy "auth all key_results"        on key_results       for all using (auth.uid() is not null) with check (auth.uid() is not null);
+create policy "auth all initiatives"        on initiatives       for all using (auth.uid() is not null) with check (auth.uid() is not null);
 create policy "auth all calendar_events"    on calendar_events   for all using (auth.uid() is not null) with check (auth.uid() is not null);
 create policy "auth all creative_roadmap"   on creative_roadmap  for all using (auth.uid() is not null) with check (auth.uid() is not null);
 create policy "auth all revenue_months"     on revenue_months    for all using (auth.uid() is not null) with check (auth.uid() is not null);
@@ -238,7 +258,7 @@ declare t text;
 begin
   for t in
     select unnest(array[
-      'profiles','okrs','key_results','calendar_events',
+      'profiles','okrs','key_results','initiatives','calendar_events',
       'creative_roadmap','revenue_months','revenue_settings','creators'
     ])
   loop
